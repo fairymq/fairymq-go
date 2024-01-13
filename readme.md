@@ -28,7 +28,7 @@ go mod download github.com/fairymq/fairymq-go
 		log.Fatalf(err.Error())
 	}
 
-	last, err := client.LastIn()
+	first, err := client.FirstIn() // Get first up in queue
 	if err != nil {
 		log.Fatalf(err.Error()) 
 	}

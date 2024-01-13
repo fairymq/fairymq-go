@@ -184,38 +184,38 @@ try:
 	return res, nil
 }
 
-// LengthOf provides length of specified queue
-func (client *Client) LengthOf(queue string) ([]byte, error) {
+// FirstIn first message up in specified queue
+func (client *Client) FirstIn(queue string) ([]byte, error) {
 
 	attempts := 0 // Max attempts to reach server is 10
 
 	// Resolve UDP address
 	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 	}
 
 	// Dial address
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 	}
 
 	publicKeyPEM, err := os.ReadFile(client.PublicKey)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 	}
 
 	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
 	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 	}
 
-	plaintext := []byte(fmt.Sprintf("LENGTH OF %s\r\n", queue))
+	plaintext := []byte(fmt.Sprintf("FIRST IN %s\r\n", queue))
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 	}
 
 	// Attempt server
@@ -226,13 +226,13 @@ try:
 	// Send to server
 	_, err = conn.Write(ciphertext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 	}
 
 	// If nothing received in 60 milliseconds.  Retry
 	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 	}
 
 	// Read from server
@@ -247,7 +247,7 @@ try:
 
 			}
 		} else {
-			return nil, errors.New(fmt.Sprintf("could not get length of queue %s. %s", queue, err.Error()))
+			return nil, errors.New(fmt.Sprintf("could not get first message in queue %s. %s", queue, err.Error()))
 		}
 	}
 

@@ -104,7 +104,7 @@ try:
 			if attempts < 10 {
 				goto try
 			} else {
-
+				return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
 			}
 		} else {
 			return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
@@ -174,7 +174,7 @@ try:
 			if attempts < 10 {
 				goto try
 			} else {
-
+				return nil, errors.New(fmt.Sprintf("could not get length of queue. %s", err.Error()))
 			}
 		} else {
 			return nil, errors.New(fmt.Sprintf("could not get length of queue. %s", err.Error()))
@@ -198,21 +198,25 @@ func (client *Client) FirstIn() ([]byte, error) {
 	// Dial address
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))	}
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
 
 	publicKeyPEM, err := os.ReadFile(client.PublicKey)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))	}
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
 
 	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
 	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))	}
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
 
 	plaintext := []byte(fmt.Sprintf("FIRST IN\r\n"))
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))	}
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
 
 	// Attempt server
 	goto try
@@ -222,12 +226,14 @@ try:
 	// Send to server
 	_, err = conn.Write(ciphertext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))	}
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
 
 	// If nothing received in 60 milliseconds.  Retry
 	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))	}
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
 
 	// Read from server
 	res, err := bufio.NewReader(conn).ReadBytes('\n')
@@ -238,44 +244,49 @@ try:
 			if attempts < 10 {
 				goto try
 			} else {
-
+				return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
 			}
 		} else {
-			return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))		}
+			return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+		}
 	}
 
 	return res, nil
 }
 
 // Shift removes first up in queue
-func (client *Client) Shift() ([]byte, error) {
+func (client *Client) Shift()  error {
 
 	attempts := 0 // Max attempts to reach server is 10
 
 	// Resolve UDP address
 	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+		return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
 	}
 
 	// Dial address
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+	}
 
 	publicKeyPEM, err := os.ReadFile(client.PublicKey)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+	}
 
 	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
 	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+	}
 
 	plaintext := []byte(fmt.Sprintf("SHIFT\r\n"))
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+	}
 
 	// Attempt server
 	goto try
@@ -285,15 +296,17 @@ try:
 	// Send to server
 	_, err = conn.Write(ciphertext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+	}
 
 	// If nothing received in 60 milliseconds.  Retry
 	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+	}
 
 	// Read from server
-	res, err := bufio.NewReader(conn).ReadBytes('\n')
+	_, err = bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			attempts += 1
@@ -301,44 +314,50 @@ try:
 			if attempts < 10 {
 				goto try
 			} else {
+				return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
 
 			}
 		} else {
-			return nil, errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))		}
+			return  errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+		}
 	}
 
-	return res, nil
+	return  nil
 }
 
 // Clear clears entire queue
-func (client *Client) Clear() ([]byte, error) {
+func (client *Client) Clear()  error {
 
 	attempts := 0 // Max attempts to reach server is 10
 
 	// Resolve UDP address
 	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+		return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
 	}
 
 	// Dial address
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+	}
 
 	publicKeyPEM, err := os.ReadFile(client.PublicKey)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+	}
 
 	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
 	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+	}
 
 	plaintext := []byte(fmt.Sprintf("CLEAR\r\n"))
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+	}
 
 	// Attempt server
 	goto try
@@ -348,15 +367,17 @@ try:
 	// Send to server
 	_, err = conn.Write(ciphertext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))	}
+		return errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+	}
 
 	// If nothing received in 60 milliseconds.  Retry
 	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+	}
 
 	// Read from server
-	res, err := bufio.NewReader(conn).ReadBytes('\n')
+	_, err = bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			attempts += 1
@@ -364,44 +385,48 @@ try:
 			if attempts < 10 {
 				goto try
 			} else {
-
+				return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
 			}
 		} else {
-			return nil, errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))		}
+			return  errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+		}
 	}
 
-	return res, nil
+	return  nil
 }
 
 // Pop removes last message from queue
-func (client *Client) Pop() ([]byte, error) {
-
+func (client *Client) Pop() error {
 	attempts := 0 // Max attempts to reach server is 10
 
 	// Resolve UDP address
 	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+		return errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
 	}
 
 	// Dial address
 	conn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+	}
 
 	publicKeyPEM, err := os.ReadFile(client.PublicKey)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+	}
 
 	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
 	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+	}
 
 	plaintext := []byte(fmt.Sprintf("POP\r\n"))
 	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+	}
 
 	// Attempt server
 	goto try
@@ -411,15 +436,17 @@ try:
 	// Send to server
 	_, err = conn.Write(ciphertext)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+	}
 
 	// If nothing received in 60 milliseconds.  Retry
 	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))	}
+		return  errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+	}
 
 	// Read from server
-	res, err := bufio.NewReader(conn).ReadBytes('\n')
+	_, err = bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			attempts += 1
@@ -427,13 +454,14 @@ try:
 			if attempts < 10 {
 				goto try
 			} else {
-
+				return errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
 			}
 		} else {
-			return nil, errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))		}
+			return  errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+		}
 	}
 
-	return res, nil
+	return  nil
 }
 
 // LastIn get last in queue
@@ -496,7 +524,7 @@ try:
 			if attempts < 10 {
 				goto try
 			} else {
-
+				return nil, errors.New(fmt.Sprintf("could not get last message in queue. %s", err.Error()))
 			}
 		} else {
 			return nil, errors.New(fmt.Sprintf("could not get last message in queue. %s", err.Error()))
@@ -504,4 +532,215 @@ try:
 	}
 
 	return res, nil
+}
+
+// ListConsumers lists queue consumers
+func (client *Client) ListConsumers() ([]byte, error) {
+
+	attempts := 0 // Max attempts to reach server is 10
+
+	// Resolve UDP address
+	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+	}
+
+	// Dial address
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+	}
+
+	publicKeyPEM, err := os.ReadFile(client.PublicKey)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+	}
+
+	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
+	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+	}
+
+	plaintext := []byte(fmt.Sprintf("LIST CONSUMERS\r\n"))
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+	}
+
+	// Attempt server
+	goto try
+
+try:
+
+	// Send to server
+	_, err = conn.Write(ciphertext)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+	}
+
+	// If nothing received in 60 milliseconds.  Retry
+	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+	}
+
+	// Read from server
+	res, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			attempts += 1
+
+			if attempts < 10 {
+				goto try
+			} else {
+				return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+			}
+		} else {
+			return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+		}
+	}
+
+	return res, nil
+}
+
+// NewConsumer adds a new consumer
+func (client *Client) NewConsumer(address string) error {
+
+	attempts := 0 // Max attempts to reach server is 10
+
+	// Resolve UDP address
+	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+	}
+
+	// Dial address
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+	}
+
+	publicKeyPEM, err := os.ReadFile(client.PublicKey)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+	}
+
+	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
+	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+	}
+
+	plaintext := []byte(fmt.Sprintf("NEW CONSUMER %s\r\n", address))
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+	}
+
+	// Attempt server
+	goto try
+
+try:
+
+	// Send to server
+	_, err = conn.Write(ciphertext)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+	}
+
+	// If nothing received in 60 milliseconds.  Retry
+	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+	}
+
+	// Read from server
+	_, err = bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			attempts += 1
+
+			if attempts < 10 {
+				goto try
+			} else {
+				return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+			}
+		} else {
+			return  errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+		}
+	}
+
+	return  nil
+}
+
+
+// RemoveConsumer removes consumer
+func (client *Client) RemoveConsumer(address string)  error {
+
+	attempts := 0 // Max attempts to reach server is 10
+
+	// Resolve UDP address
+	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+	}
+
+	// Dial address
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+	}
+
+	publicKeyPEM, err := os.ReadFile(client.PublicKey)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+	}
+
+	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
+	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+	}
+
+	plaintext := []byte(fmt.Sprintf("REM CONSUMER %s\r\n", address))
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+	}
+
+	// Attempt server
+	goto try
+
+try:
+
+	// Send to server
+	_, err = conn.Write(ciphertext)
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+	}
+
+	// If nothing received in 60 milliseconds.  Retry
+	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
+	if err != nil {
+		return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+	}
+
+	// Read from server
+	_, err = bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			attempts += 1
+
+			if attempts < 10 {
+				goto try
+			} else {
+				return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+			}
+		} else {
+			return  errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+		}
+	}
+
+	return  nil
 }

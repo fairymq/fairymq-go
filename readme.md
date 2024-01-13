@@ -15,7 +15,7 @@ go mod download github.com/fairymq/fairymq-go
 ``` 
 	client := &fairymqgo.Client{
 		Host:      "", // i.e 0.0.0.0
-		PublicKey: "", // i.e example.private.pem
+		PublicKey: "", // i.e example.public.pem
 	}
 
 	err := client.Enqueue([]byte("Hello world"))

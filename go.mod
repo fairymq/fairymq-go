@@ -1,3 +1,3 @@
-module fairymq-go
+module fairymqgo
 
 go 1.21

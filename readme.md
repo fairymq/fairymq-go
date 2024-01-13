@@ -10,3 +10,28 @@ OR
 ```
 go mod download github.com/fairymq/fairymq-go
 ```
+
+## Using
+``` 
+	client := &fairymqgo.Client{
+		Host:      "", // i.e 0.0.0.0
+		PublicKey: "", // i.e example.private.pem
+	}
+
+	err := client.Enqueue([]byte("Hello world"))
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+
+	err = client.Enqueue([]byte("Hello again"))
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+
+	last, err := client.LastIn()
+	if err != nil {
+		log.Fatalf(err.Error()) 
+	}
+	
+	//.. do something with last message bytes
+```

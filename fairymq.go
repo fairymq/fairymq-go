@@ -38,7 +38,7 @@ import (
 // Client is the fairyMQ client structure
 type Client struct {
 	Host            string       // i.e 0.0.0.0:5991
-	PublicKey       string       //i.e example.public.pem
+	PublicKey       string       //i.e testing.public.pem
 	UDPAddr         *net.UDPAddr // address of UDP end point
 	UDPConn         *net.UDPConn // UDP connection
 	ParsedPublicKey any          // Parsed public key

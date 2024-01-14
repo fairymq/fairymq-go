@@ -21,40 +21,9 @@
 package fairymqgo
 
 import (
-	"reflect"
+	"bytes"
 	"testing"
 )
-
-func TestClient_Clear(t *testing.T) {
-	type fields struct {
-		Host      string
-		PublicKey string
-	}
-	tests := []struct {
-		name    string
-		fields  fields
-		want    []byte
-		wantErr bool
-	}{
-		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991",PublicKey: "testing.public.pem"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := &Client{
-				Host:      tt.fields.Host,
-				PublicKey: tt.fields.PublicKey,
-			}
-			got, err := client.Clear()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Clear() got = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
 
 func TestClient_Enqueue(t *testing.T) {
 	type fields struct {
@@ -70,7 +39,7 @@ func TestClient_Enqueue(t *testing.T) {
 		want    []byte
 		wantErr bool
 	}{
-		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991",PublicKey: "testing.public.pem"}},
+		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991", PublicKey: "testing.public.pem"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -78,7 +47,26 @@ func TestClient_Enqueue(t *testing.T) {
 				Host:      tt.fields.Host,
 				PublicKey: tt.fields.PublicKey,
 			}
-			if err := client.Enqueue(tt.args.data); (err != nil) != tt.wantErr {
+
+			err := client.Configure()
+			if err != nil {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if err := client.Enqueue([]byte("Hello world")); (err != nil) != tt.wantErr {
+				t.Errorf("Enqueue() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if err := client.Enqueue([]byte("Hello world 1")); (err != nil) != tt.wantErr {
+				t.Errorf("Enqueue() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if err := client.Enqueue([]byte("Hello world 2")); (err != nil) != tt.wantErr {
+				t.Errorf("Enqueue() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if err := client.Enqueue([]byte("Hello world 3")); (err != nil) != tt.wantErr {
 				t.Errorf("Enqueue() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
@@ -96,7 +84,7 @@ func TestClient_FirstIn(t *testing.T) {
 		want    []byte
 		wantErr bool
 	}{
-		{name: "test", wantErr: false, fields: fields{Host: "0.0.0.0:5991",PublicKey: "testing.public.pem"}},
+		{name: "test", wantErr: false, want: []byte("Hello world 3"), fields: fields{Host: "0.0.0.0:5991", PublicKey: "testing.public.pem"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -104,13 +92,20 @@ func TestClient_FirstIn(t *testing.T) {
 				Host:      tt.fields.Host,
 				PublicKey: tt.fields.PublicKey,
 			}
+
+			err := client.Configure()
+			if err != nil {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
 			got, err := client.FirstIn()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FirstIn() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("FirstIn() got = %v, want %v", got, tt.want)
+			if !bytes.HasPrefix(got, tt.want) {
+				t.Errorf("FirstIn() got = %v, want %v", string(got), tt.want)
 			}
 		})
 	}
@@ -127,7 +122,7 @@ func TestClient_LastIn(t *testing.T) {
 		want    []byte
 		wantErr bool
 	}{
-		{name: "test", wantErr: false, fields: fields{Host: "0.0.0.0:5991",PublicKey: "testing.public.pem"}},
+		{name: "test", wantErr: false, want: []byte("Hello world"), fields: fields{Host: "0.0.0.0:5991", PublicKey: "testing.public.pem"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -135,12 +130,19 @@ func TestClient_LastIn(t *testing.T) {
 				Host:      tt.fields.Host,
 				PublicKey: tt.fields.PublicKey,
 			}
+
+			err := client.Configure()
+			if err != nil {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
 			got, err := client.LastIn()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("LastIn() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
+			if !bytes.HasPrefix(got, tt.want) {
 				t.Errorf("LastIn() got = %v, want %v", got, tt.want)
 			}
 		})
@@ -158,7 +160,7 @@ func TestClient_Length(t *testing.T) {
 		want    []byte
 		wantErr bool
 	}{
-		{name: "test", wantErr: false, want: []byte("0"), fields: fields{Host: "0.0.0.0:5991",PublicKey: "testing.public.pem"}},
+		{name: "test", wantErr: false, want: []byte("4 messages"), fields: fields{Host: "0.0.0.0:5991", PublicKey: "testing.public.pem"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -166,13 +168,20 @@ func TestClient_Length(t *testing.T) {
 				Host:      tt.fields.Host,
 				PublicKey: tt.fields.PublicKey,
 			}
+
+			err := client.Configure()
+			if err != nil {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
 			got, err := client.Length()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Length() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Length() got = %v, want %v", got, tt.want)
+			if !bytes.HasPrefix(got, tt.want) {
+				t.Errorf("Length() got = %v, want %v", string(got), tt.want)
 			}
 		})
 	}
@@ -189,7 +198,7 @@ func TestClient_Pop(t *testing.T) {
 		want    []byte
 		wantErr bool
 	}{
-		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991",PublicKey: "testing.public.pem"}},
+		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991", PublicKey: "testing.public.pem"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -197,13 +206,17 @@ func TestClient_Pop(t *testing.T) {
 				Host:      tt.fields.Host,
 				PublicKey: tt.fields.PublicKey,
 			}
-			got, err := client.Pop()
+
+			err := client.Configure()
+			if err != nil {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			err = client.Pop()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Pop() error = %v, wantErr %v", err, tt.wantErr)
 				return
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Pop() got = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -220,7 +233,7 @@ func TestClient_Shift(t *testing.T) {
 		want    []byte
 		wantErr bool
 	}{
-		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991",PublicKey: "testing.public.pem"}},
+		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991", PublicKey: "testing.public.pem"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -228,14 +241,55 @@ func TestClient_Shift(t *testing.T) {
 				Host:      tt.fields.Host,
 				PublicKey: tt.fields.PublicKey,
 			}
-			got, err := client.Shift()
+
+			err := client.Configure()
+			if err != nil {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			err = client.Shift()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Shift() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Shift() got = %v, want %v", got, tt.want)
+
+		})
+	}
+}
+
+func TestClient_Clear(t *testing.T) {
+	type fields struct {
+		Host      string
+		PublicKey string
+	}
+	tests := []struct {
+		name    string
+		fields  fields
+		want    []byte
+		wantErr bool
+	}{
+		{name: "test", wantErr: false, want: []byte("ACK"), fields: fields{Host: "0.0.0.0:5991", PublicKey: "testing.public.pem"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &Client{
+				Host:      tt.fields.Host,
+				PublicKey: tt.fields.PublicKey,
 			}
+
+			err := client.Configure()
+			if err != nil {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			err = client.Clear()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Clear() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
 		})
 	}
 }

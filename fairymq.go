@@ -114,6 +114,79 @@ try:
 	return nil
 }
 
+// EnqueueWithKey enqueues a new message into queue with a provided key.  Keys are not unique
+func (client *Client) EnqueueWithKey(data []byte, messageKey string) error {
+
+	attempts := 0 // Max attempts to reach server is 10
+
+	// Resolve UDP address
+	udpAddr, err := net.ResolveUDPAddr("udp", client.Host)
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+	}
+
+	// Dial address
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+	}
+
+	// Mark the creation of message
+	timestamp := time.Now().UnixMicro()
+
+	publicKeyPEM, err := os.ReadFile(client.PublicKey)
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+	}
+
+	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
+	publicKey, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+	}
+
+	plaintext := append([]byte(fmt.Sprintf("ENQUEUE %s\r\n%d\r\n",messageKey, timestamp)), data...)
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, publicKey.(*rsa.PublicKey), plaintext)
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+	}
+
+	// Attempt server
+	goto try
+
+try:
+
+	// Send to server
+	_, err = conn.Write(ciphertext)
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+	}
+
+	// If nothing received in 60 milliseconds.  Retry
+	err = conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
+	if err != nil {
+		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+	}
+
+	// Read from server
+	_, err = bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			attempts += 1
+
+			if attempts < 10 {
+				goto try
+			} else {
+				return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+			}
+		} else {
+			return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+		}
+	}
+
+	return nil
+}
+
 // Length get length of queue
 func (client *Client) Length() ([]byte, error) {
 

@@ -20,6 +20,11 @@ go mod download github.com/fairymq/fairymq-go
 		Host:      "", // i.e 0.0.0.0
 		PublicKey: "", // i.e example.public.pem
 	}
+	
+	err := client.Configure()
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
 
 	err := client.Enqueue([]byte("Hello world"))
 	if err != nil {

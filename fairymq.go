@@ -308,8 +308,8 @@ try:
 		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
 	}
 
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
+	var buff []byte
+	n, err := bufio.NewReader(client.UDPConn).Read(buff)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			attempts += 1
@@ -324,7 +324,7 @@ try:
 		}
 	}
 
-	return bytes.Split(res, []byte("\r\r")), nil
+	return bytes.Split(bytes.TrimSuffix(buff[:n], []byte("\r\n")), []byte("\r\r")), nil
 }
 
 // ExpireMessages sets whether queue expires messages or not.  Default is 7200 seconds

@@ -449,6 +449,13 @@ try:
 	return nil
 }
 
+// Closes up connection
+func (client *Client) Close() {
+
+	client.UDPConn.Close()
+
+}
+
 // Clear clears entire queue
 func (client *Client) Clear() error {
 

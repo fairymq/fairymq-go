@@ -324,7 +324,7 @@ try:
 		}
 	}
 
-	return bytes.Split(res, []byte("\r\n\r\n")), nil
+	return bytes.Split(res, []byte("\r\r")), nil
 }
 
 // ExpireMessages sets whether queue expires messages or not.  Default is 7200 seconds

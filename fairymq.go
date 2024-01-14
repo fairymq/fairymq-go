@@ -281,6 +281,52 @@ try:
 	return res, nil
 }
 
+func (client *Client) GetAllMessagesByKey(key string) ([][]byte, error) {
+
+	attempts := 0 // Max attempts to reach server is 10
+
+	plaintext := []byte(fmt.Sprintf("MSGS WITH KEY %s\r\n", key))
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
+
+	// Attempt server
+	goto try
+
+try:
+
+	// Send to server
+	_, err = client.UDPConn.Write(ciphertext)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
+
+	// If nothing received in 60 milliseconds.  Retry
+	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+	}
+
+	// Read from server
+	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			attempts += 1
+
+			if attempts < 10 {
+				goto try
+			} else {
+				return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+			}
+		} else {
+			return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+		}
+	}
+
+	return bytes.Split(res, []byte("\r\n\r\n")), nil
+}
+
 // ExpireMessages sets whether queue expires messages or not.  Default is 7200 seconds
 func (client *Client) ExpireMessages(enabled bool) error {
 

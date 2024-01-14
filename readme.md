@@ -1,4 +1,7 @@
-![fairymq.png](images%2Ffairymq.png)
+<center>
+    <img src="./images/fairymq.png" width="200" />
+</center>
+
 *****************
 fairyMQ GO Native Client Module
 

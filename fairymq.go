@@ -28,160 +28,89 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"net"
 	"os"
 	"time"
 )
 
-// Client is the fairyMQ client structure
 type Client struct {
-	Host            string       // i.e 0.0.0.0:5991
-	PublicKey       string       //i.e testing.public.pem
-	UDPAddr         *net.UDPAddr // address of UDP end point
-	UDPConn         *net.UDPConn // UDP connection
-	ParsedPublicKey any          // Parsed public key
+	udpConn *net.UDPConn
+	pubKey  *rsa.PublicKey
+
+	options options
 }
 
-// Configure configures public key amongst other things.  Must run before anything else
-func (client *Client) Configure() error {
-	var err error
-
-	// Resolve UDP address
-	client.UDPAddr, err = net.ResolveUDPAddr("udp", client.Host)
+func Dial(host, publicKey string, opts ...Option) (*Client, error) {
+	udpAddr, err := net.ResolveUDPAddr("udp", host)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure client. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: resolve udp addr error: %w", err)
 	}
 
-	// Dial address
-	client.UDPConn, err = net.DialUDP("udp", nil, client.UDPAddr)
+	udpConn, err := net.DialUDP("udp", nil, udpAddr)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure client. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: dial udp error: %w", err)
 	}
 
-	publicKeyPEM, err := os.ReadFile(client.PublicKey)
+	f, err := os.ReadFile(publicKey)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure client. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: read public key file %s error: %w", publicKey, err)
 	}
 
-	publicKeyBlock, _ := pem.Decode(publicKeyPEM)
-
-	client.ParsedPublicKey, err = x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+	pemBlock, _ := pem.Decode(f)
+	parsedPublicKey, err := x509.ParsePKIXPublicKey(pemBlock.Bytes)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure client. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: parse public key error: %w", err)
 	}
 
-	return nil
+	rsaPublicKey, ok := parsedPublicKey.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("fairymq: parsed public key is not an rsa key: %T", parsedPublicKey)
+	}
+
+	o := options{
+		attempts:    10,
+		readTimeout: 60 * time.Millisecond,
+	}
+
+	for i := range opts {
+		opts[i](&o)
+	}
+
+	return &Client{
+		udpConn: udpConn,
+		pubKey:  rsaPublicKey,
+		options: o,
+	}, nil
 }
 
 // Enqueue enqueues a new message into queue
-func (client *Client) Enqueue(data []byte) error {
+func (client *Client) Enqueue(data string) error {
+	command := fmt.Sprintf(string(enqueueOpCode), time.Now().UnixMicro(), data)
 
-	var err error
-	attempts := 0 // Max attempts to reach server is 10
-	// Mark the creation of message
-	timestamp := time.Now().UnixMicro()
-
-	plaintext := append([]byte(fmt.Sprintf("ENQUEUE\r\n%d\r\n", timestamp)), data...)
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+		return fmt.Errorf("fairymq: enqueue data error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
 }
 
 // EnqueueWithKey enqueues a new message into queue with a provided key.  Keys are not unique
-func (client *Client) EnqueueWithKey(data []byte, messageKey string) error {
+func (client *Client) EnqueueWithKey(data, messageKey string) error {
+	command := fmt.Sprintf(string(enqueueWithKeyOpCode), messageKey, time.Now().UnixMicro(), data)
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	// Mark the creation of message
-	timestamp := time.Now().UnixMicro()
-
-	plaintext := append([]byte(fmt.Sprintf("ENQUEUE %s\r\n%d\r\n", messageKey, timestamp)), data...)
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
+		return fmt.Errorf("fairymq: enqueue data with key error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not enqueue message. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
@@ -189,199 +118,58 @@ try:
 
 // Length get length of queue
 func (client *Client) Length() ([]byte, error) {
+	command := string(lenghOpCode)
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("LENGTH\r\n"))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: length error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get length of queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return nil, errors.New(fmt.Sprintf("could not get length of queue. %s", err.Error()))
-			}
-		} else {
-			return nil, errors.New(fmt.Sprintf("could not get length of queue. %s", err.Error()))
-		}
-	}
-
-	return res, nil
+	// TOOD: parse and return uint.
+	return p, nil
 }
 
 // FirstIn first message up in queue
 func (client *Client) FirstIn() ([]byte, error) {
+	command := string(firstInOpCode)
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("FIRST IN\r\n"))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: first in error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-			}
-		} else {
-			return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-		}
-	}
-
-	return res, nil
+	// TOOD: parse and return.
+	return p, nil
 }
 
 func (client *Client) GetAllMessagesByKey(key string) ([][]byte, error) {
+	command := fmt.Sprintf(string(messagesByKeyOpCode), key)
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("MSGS WITH KEY %s\r\n", key))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: messages by key error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-	}
-
-	var buff []byte
-	n, err := bufio.NewReader(client.UDPConn).Read(buff)
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-			}
-		} else {
-			return nil, errors.New(fmt.Sprintf("could not get first message in queue. %s", err.Error()))
-		}
-	}
-
-	return bytes.Split(bytes.TrimSuffix(buff[:n], []byte("\r\n")), []byte("\r\r")), nil
+	// TOOD: parse and return normalized messages.
+	return bytes.Split(bytes.TrimSuffix(p, []byte("\r\n")), []byte("\r\r")), nil
 }
 
 // ExpireMessages sets whether queue expires messages or not.  Default is 7200 seconds
 func (client *Client) ExpireMessages(enabled bool) error {
-
-	bI := 0
-
+	f := 0
 	if enabled {
-		bI = 1
+		f = 1
 	}
 
-	attempts := 0 // Max attempts to reach server is 10
+	command := fmt.Sprintf(string(expireMsgOpCode), f)
 
-	plaintext := []byte(fmt.Sprintf("EXP MSGS %d\r\n", bI))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure expire messages on queue. %s", err.Error()))
+		return fmt.Errorf("fairymq: expire messages error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure expire messages on queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure expire messages on queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not configure expire messages on queue. %s", err.Error()))
-
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not configure expire messages on queue. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
@@ -389,53 +177,15 @@ try:
 
 // SetExpireMessagesSeconds sets queue expire messages seconds configuration
 func (client *Client) SetExpireMessagesSeconds(sec uint) error {
+	command := fmt.Sprintf(string(expiresSecsMsgOpCode), sec)
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("EXP MSGS SEC %d\r\n", sec))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure expiry in seconds for messages on queue. %s", err.Error()))
+		return fmt.Errorf("fairymq: expire secs messages error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure expiry in seconds for messages on queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not configure expiry in seconds for messages on queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not configure expiry in seconds for messages on queue. %s", err.Error()))
-
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not configure expiry in seconds for messages on queue. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
@@ -443,113 +193,31 @@ try:
 
 // Shift removes first up in queue
 func (client *Client) Shift() error {
+	command := fmt.Sprintf(string(shiftOpCode))
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("SHIFT\r\n"))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
+		return fmt.Errorf("fairymq: shift error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
-
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not shift queue. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
 }
 
-// Closes up connection
-func (client *Client) Close() {
-
-	client.UDPConn.Close()
-
-}
-
 // Clear clears entire queue
 func (client *Client) Clear() error {
+	command := fmt.Sprintf(string(clearOpCode))
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("CLEAR\r\n"))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
+		return fmt.Errorf("fairymq: clear error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not clear queue. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
@@ -557,51 +225,15 @@ try:
 
 // Pop removes last message from queue
 func (client *Client) Pop() error {
-	attempts := 0 // Max attempts to reach server is 10
+	command := fmt.Sprintf(string(popOpCode))
 
-	plaintext := []byte(fmt.Sprintf("POP\r\n"))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
+		return fmt.Errorf("fairymq: pop queue error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not pop queue. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
@@ -609,146 +241,39 @@ try:
 
 // LastIn get last in queue
 func (client *Client) LastIn() ([]byte, error) {
+	command := fmt.Sprintf(string(lastInOpCode))
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("LAST IN\r\n"))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get last message in queue. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: last in error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get last message in queue. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not get last message in queue. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return nil, errors.New(fmt.Sprintf("could not get last message in queue. %s", err.Error()))
-			}
-		} else {
-			return nil, errors.New(fmt.Sprintf("could not get last message in queue. %s", err.Error()))
-		}
-	}
-
-	return res, nil
+	return p, nil
 }
 
 // ListConsumers lists queue consumers
 func (client *Client) ListConsumers() ([]byte, error) {
+	command := fmt.Sprintf(string(listConsumersOpCode))
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("LIST CONSUMERS\r\n"))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
+		return nil, fmt.Errorf("fairymq: list consumers error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
-			}
-		} else {
-			return nil, errors.New(fmt.Sprintf("could not list consumers. %s", err.Error()))
-		}
-	}
-
-	return res, nil
+	return p, nil
 }
 
 // NewConsumer adds a new consumer
 func (client *Client) NewConsumer(address string) error {
+	command := fmt.Sprintf(string(newConsumerOpCode), address)
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("NEW CONSUMER %s\r\n", address))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
+		return fmt.Errorf("fairymq: new consumer error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not add new consumer. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
@@ -756,53 +281,52 @@ try:
 
 // RemoveConsumer removes consumer
 func (client *Client) RemoveConsumer(address string) error {
+	command := fmt.Sprintf(string(removeConsumerpOpCode), address)
 
-	attempts := 0 // Max attempts to reach server is 10
-
-	plaintext := []byte(fmt.Sprintf("REM CONSUMER %s\r\n", address))
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, client.ParsedPublicKey.(*rsa.PublicKey), plaintext)
+	p, err := client.writeWithRetry(command)
 	if err != nil {
-		return errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
+		return fmt.Errorf("fairymq: remove consumer error: %w", err)
 	}
 
-	// Attempt server
-	goto try
-
-try:
-
-	// Send to server
-	_, err = client.UDPConn.Write(ciphertext)
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
-	}
-
-	// If nothing received in 60 milliseconds.  Retry
-	err = client.UDPConn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
-	if err != nil {
-		return errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
-	}
-
-	// Read from server
-	res, err := bufio.NewReader(client.UDPConn).ReadBytes('\n')
-	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			attempts += 1
-
-			if attempts < 10 {
-				goto try
-			} else {
-				return errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
-			}
-		} else {
-			return errors.New(fmt.Sprintf("could not remove consumer. %s", err.Error()))
-		}
-	}
-
-	if bytes.HasPrefix(res, []byte("ACK")) {
-		return nil
-	} else {
-		return errors.New("invalid response.  expecting ack.")
+	if !bytes.HasPrefix(p, []byte(ackOpcode)) {
+		return fmt.Errorf("fairymq: invalid response for command %s received: %v", command, p)
 	}
 
 	return nil
+}
+
+// Closes up connection
+func (client *Client) Close() error {
+	return client.udpConn.Close()
+}
+
+func (client *Client) writeWithRetry(command string) ([]byte, error) {
+	encryptedCommand, err := rsa.EncryptPKCS1v15(rand.Reader, client.pubKey, []byte(command))
+	if err != nil {
+		return nil, fmt.Errorf("could not encrypt command %s: %w", command, err)
+	}
+
+	for i := 0; i < int(client.options.attempts); i++ {
+		_, err = client.udpConn.Write(encryptedCommand)
+		if err != nil {
+			return nil, fmt.Errorf("could not write command %s: %w", command, err)
+		}
+
+		if err := client.udpConn.SetReadDeadline(time.Now().Add(client.options.readTimeout)); err != nil {
+			return nil, fmt.Errorf("set read deadline error: %w", err)
+		}
+
+		p, err := bufio.NewReader(client.udpConn).ReadBytes('\n')
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+
+			return nil, fmt.Errorf("could not read response: %w", err)
+		}
+
+		return p, nil
+	}
+
+	return nil, fmt.Errorf("exceeded the maximum number of attempts when attempting to send a command: %s", command)
 }
